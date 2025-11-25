@@ -1,0 +1,9 @@
+version: '3.2'
+
+services:
+  woffu-bot:
+    container_name: woffu-bot
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
