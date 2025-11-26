@@ -105,12 +105,47 @@ func (w *woffu) reconcile() {
 		return
 	}
 
+	// DEBUG: Log configured working day IDs
+	log.Printf("DEBUG: Configured Working Day IDs: %v", w.WorkingEventIDs)
+
+	// DEBUG: Log what Woffu API returned
+	if len(evs) == 0 {
+		log.Println("DEBUG: Woffu returned NO events for today")
+	} else {
+		log.Printf("DEBUG: Woffu API returned Event: ID=%d, Name=\"%s\"", evs[0].ID, evs[0].Name)
+	}
+
 	// Determine if it's a working day
 	isWorkingDay := false
-	for _, id := range w.WorkingEventIDs {
-		if len(evs) > 0 && evs[0].ID == id {
+	weekday := time.Now().Weekday()
+
+	// Step A: Check if it's a weekend
+	if weekday == time.Saturday || weekday == time.Sunday {
+		log.Printf("DEBUG: Today is %s (weekend) -> Non-Working Day", weekday)
+		isWorkingDay = false
+	} else {
+		// Step B: It's a weekday (Mon-Fri)
+		log.Printf("DEBUG: Today is %s (weekday)", weekday)
+
+		if len(evs) == 0 {
+			// Empty list on a weekday = Standard working day
+			log.Println("DEBUG: No events found on weekday -> Standard Working Day")
 			isWorkingDay = true
-			break
+		} else {
+			// Events exist - check if any match the configured working day IDs
+			// If they match, it's a working day. If not, it's a holiday/vacation.
+			for _, id := range w.WorkingEventIDs {
+				match := evs[0].ID == id
+				log.Printf("DEBUG: Comparing EventID [%d] with ConfiguredID [%d]... Match? %v", evs[0].ID, id, match)
+				if match {
+					isWorkingDay = true
+					log.Printf("DEBUG: ID %d MATCHES configured working ID. Treating as Working Day.", id)
+					break
+				}
+			}
+			if !isWorkingDay {
+				log.Printf("DEBUG: Event ID %d does NOT match any configured working ID. Treating as Non-Working Day (Holiday/Vacation).", evs[0].ID)
+			}
 		}
 	}
 

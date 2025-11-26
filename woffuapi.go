@@ -105,8 +105,10 @@ type eventJSON struct {
 }
 
 func (w *woffu) getEvents() ([]eventJSON, error) {
-	dateTime := getDate()
-	req, err := http.NewRequest("GET", "https://"+w.Corp+".woffu.com/api/users/"+w.WoffuUID+"/events?fromDate="+dateTime, nil)
+	dateTime := getTodayDateString()
+	requestURL := "https://" + w.Corp + ".woffu.com/api/users/" + w.WoffuUID + "/events?fromDate=" + dateTime
+	log.Printf("DEBUG getEvents: Requesting URL: %s", requestURL)
+	req, err := http.NewRequest("GET", requestURL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -131,6 +133,8 @@ func (w *woffu) getEvents() ([]eventJSON, error) {
 		log.Println("Error parsing JSON in getEvents. Body:", string(bodyText))
 		return nil, err
 	}
+	log.Printf("DEBUG getEvents: Raw API response body: %s", string(bodyText))
+	log.Printf("DEBUG getEvents: Parsed %d events from API", len(events))
 	return events, nil
 }
 
@@ -190,21 +194,31 @@ func getTodayDateString() string {
 	return time.Now().Format("2006-01-02")
 }
 
-type signJSON struct {
-	SignId    int    `json:"SignId"`
-	StartDate string `json:"StartDate"`
-	EndDate   string `json:"EndDate"`
+type signDetail struct {
+	Time string `json:"shortTrueTime"`
+}
+
+type signSlot struct {
+	In  *signDetail `json:"in"`  // Pointer so we can check for nil
+	Out *signDetail `json:"out"` // Pointer so we can check for nil
 }
 
 // isCheckedIn returns true if the user is currently checked in
 func (w *woffu) isCheckedIn() (bool, error) {
 	today := getTodayDateString()
-	req, err := http.NewRequest("GET", "https://"+w.Corp+".woffu.com/api/users/"+w.WoffuUID+"/signs?startDate="+today+"&endDate="+today, nil)
+	// Use the slots endpoint to get daily activity
+	requestURL := "https://" + w.Corp + ".woffu.com/api/svc/signs/v2/signs/slots?fromDate=" + today + "&toDate=" + today
+	log.Printf("DEBUG isCheckedIn: Requesting URL: %s", requestURL)
+	req, err := http.NewRequest("GET", requestURL, nil)
 	if err != nil {
 		return false, err
 	}
 	addCommonHeaders(req)
-	addAuthHeaders(req, w.Corp, w.WoffuToken)
+	req.Header.Set("Authorization", "Bearer "+w.WoffuToken)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", "https://"+w.Corp+".woffu.com")
+	req.Header.Set("Referer", "https://"+w.Corp+".woffu.com/v2/personal/dashboard/user")
+
 	resp, err := w.Client.Do(req)
 	if err != nil {
 		return false, err
@@ -219,23 +233,45 @@ func (w *woffu) isCheckedIn() (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	signs := []signJSON{}
-	if err := json.Unmarshal(bodyText, &signs); err != nil {
+
+	// Log raw response before parsing for debugging
+	log.Printf("DEBUG isCheckedIn: Raw API response body: %s", string(bodyText))
+
+	// Parse as slots format
+	slots := []signSlot{}
+	if err := json.Unmarshal(bodyText, &slots); err != nil {
 		log.Println("Error parsing JSON in isCheckedIn. Body:", string(bodyText))
 		return false, err
 	}
 
-	// If no signs today, user is not checked in
-	if len(signs) == 0 {
+	log.Printf("DEBUG isCheckedIn: Parsed %d slots from API", len(slots))
+
+	// If no slots today, user is not checked in
+	if len(slots) == 0 {
+		log.Println("DEBUG isCheckedIn: No slots found -> User is NOT checked in")
 		return false, nil
 	}
 
-	// Check the last sign
-	lastSign := signs[len(signs)-1]
-	// User is checked in if StartDate exists and EndDate is empty/null
-	if lastSign.StartDate != "" && lastSign.EndDate == "" {
+	// Check the last slot
+	lastSlot := slots[len(slots)-1]
+
+	// Log the slot details
+	inTime := "nil"
+	outTime := "nil"
+	if lastSlot.In != nil {
+		inTime = lastSlot.In.Time
+	}
+	if lastSlot.Out != nil {
+		outTime = lastSlot.Out.Time
+	}
+	log.Printf("DEBUG isCheckedIn: Last slot - In: %s, Out: %s", inTime, outTime)
+
+	// User is checked in if Out is nil (no checkout time)
+	if lastSlot.Out == nil {
+		log.Println("DEBUG isCheckedIn: Last slot has no Out time -> User IS checked in")
 		return true, nil
 	}
 
+	log.Println("DEBUG isCheckedIn: Last slot has Out time -> User is NOT checked in")
 	return false, nil
 }
