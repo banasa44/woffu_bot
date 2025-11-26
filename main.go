@@ -60,94 +60,143 @@ func main() {
 	// Load config
 	w, err := newBot()
 	if err != nil {
-		log.Printf("Error creating bot: %v", err)
-		panic(err)
+		log.Fatalf("FATAL: Cannot start bot due to configuration error: %v", err)
 	}
 
 	// Get credentials
 	err = w.login()
 	if err != nil {
-		errMsg := "Error login: " + err.Error() + ". This will cause panic!"
-		log.Println(errMsg)
-		w.sendError(errors.New(errMsg))
-		panic(err)
+		log.Printf("Error during initial login: %v. Will retry in reconciliation loop.", err)
+		if w.Bot != nil {
+			w.sendError(errors.New("Initial login failed: " + err.Error() + ". Will retry."))
+		}
+		// Don't panic - let the reconciliation loop handle retries
+	} else {
+		log.Println("Initial login successful")
 	}
 
-	// Endless loop, because work does never end
-	errCount := 0
-	for {
-		// Do nothing until check in/out time
-		isCheckIn, inprecission := w.sleepTillNext()
-		// Get events
-		evs, err := w.getEvents()
-		if err != nil {
-			log.Printf("Error getting events: %v", err)
-			// Maybe token has expired, renew credentials and retry
-			if errCount == 1 {
-				errMsg := err.Error() + ". This will cause panic!"
-				log.Println(errMsg)
-				w.sendError(errors.New(errMsg))
-				panic("Too many consecutive errors")
-			} else {
-				w.sendError(err)
-			}
-			err = w.login()
-			if err != nil {
-				log.Printf("Error re-login: %v", err)
-				w.sendError(err)
-			}
-			errCount++
-			time.Sleep(10 * time.Second)
-			continue
-		}
+	log.Println("Bot initialized successfully. Starting reconciliation loop with 30-minute polling interval.")
 
-		// Check in/out if it's a working day
-		isWorkingDay := false
-		for _, id := range w.WorkingEventIDs {
-			if evs[0].ID == id {
-				isWorkingDay = true
-				break
-			}
+	// Perform immediate reconciliation check on startup
+	w.reconcile()
+
+	// Create a ticker for 30-minute intervals
+	ticker := time.NewTicker(30 * time.Minute)
+	defer ticker.Stop()
+
+	// Endless loop with ticker-based polling
+	for range ticker.C {
+		w.reconcile()
+	}
+}
+
+func (w *woffu) reconcile() {
+	log.Println("=== Starting reconciliation check ===")
+
+	// Check if today is a working day
+	evs, err := w.getEvents()
+	if err != nil {
+		log.Printf("Error getting events during reconciliation: %v", err)
+		w.sendError(errors.New("Failed to get events: " + err.Error()))
+		// Try to re-login for next attempt
+		if loginErr := w.login(); loginErr != nil {
+			log.Printf("Error re-login during reconciliation: %v", loginErr)
 		}
-		isSkipDay := false
-		today := getCurrentDate()
-		for i, skipDate := range w.SkipList {
-			if skipDate == today {
-				isSkipDay = true
-				w.SkipList[i] = w.SkipList[len(w.SkipList)-1]
-				w.SkipList = w.SkipList[:len(w.SkipList)-1]
-			}
+		return
+	}
+
+	// Determine if it's a working day
+	isWorkingDay := false
+	for _, id := range w.WorkingEventIDs {
+		if len(evs) > 0 && evs[0].ID == id {
+			isWorkingDay = true
+			break
 		}
-		if isWorkingDay && !isSkipDay {
-			// It's a working day
-			if err := w.check(); err != nil {
-				log.Printf("Error checking in/out: %v", err)
-				w.sendError(err)
-			} else {
-				errCount = 0
-				if isCheckIn {
-					w.sendMessage("Checked in successfully")
-				} else {
-					w.sendMessage("Checked out successfully")
-				}
-			}
+	}
+
+	// Check skip list
+	isSkipDay := false
+	today := getCurrentDate()
+	for i, skipDate := range w.SkipList {
+		if skipDate == today {
+			isSkipDay = true
+			w.SkipList[i] = w.SkipList[len(w.SkipList)-1]
+			w.SkipList = w.SkipList[:len(w.SkipList)-1]
+			log.Println("Today is in skip list, will not check in/out")
+			break
+		}
+	}
+
+	if !isWorkingDay || isSkipDay {
+		if isSkipDay {
+			log.Println("Skip day - no action needed")
 		} else {
-			// It's NOT a working day
-			if isCheckIn {
-				if isSkipDay {
-					w.sendMessage("You told me to not check in today, so I won't")
-				} else {
-					w.sendMessage("Enjoy your free day 😎")
-				}
-			}
-			errCount = 0
-			log.Println("Free day, not checking in/out")
+			log.Println("Not a working day - no action needed")
 		}
-		if inprecission < 0 {
-			time.Sleep(inprecission * -1)
-		}
-		time.Sleep(time.Minute)
+		return
 	}
+
+	log.Println("Today is a working day. Checking current time and user status...")
+
+	// Get current time
+	now := time.Now()
+	currentHour := now.Hour()
+	currentMinute := now.Minute()
+
+	// Convert times to minutes for easier comparison
+	currentTimeInMinutes := currentHour*60 + currentMinute
+	workStartInMinutes := w.CheckInHour*60 + w.CheckInMinute
+	workEndInMinutes := w.CheckOutHour*60 + w.CheckOutMinute
+
+	isWithinWorkingHours := currentTimeInMinutes >= workStartInMinutes && currentTimeInMinutes < workEndInMinutes
+
+	log.Printf("Current time: %02d:%02d, Within working hours (%02d:%02d-%02d:%02d): %v", currentHour, currentMinute, w.CheckInHour, w.CheckInMinute, w.CheckOutHour, w.CheckOutMinute, isWithinWorkingHours)
+
+	// Check user's current status
+	checkedIn, err := w.isCheckedIn()
+	if err != nil {
+		log.Printf("Error checking user status: %v", err)
+		w.sendError(errors.New("Failed to check user status: " + err.Error()))
+		// Try to re-login for next attempt
+		if loginErr := w.login(); loginErr != nil {
+			log.Printf("Error re-login after status check failure: %v", loginErr)
+		}
+		return
+	}
+
+	log.Printf("User is currently checked in: %v", checkedIn)
+
+	// Decision matrix
+	if isWithinWorkingHours && !checkedIn {
+		// Need to check in
+		log.Println("ACTION REQUIRED: User should be checked in but is not. Performing check-in...")
+		if err := w.check(); err != nil {
+			log.Printf("Error performing check-in: %v", err)
+			w.sendError(errors.New("Check-in failed: " + err.Error()))
+		} else {
+			log.Println("Check-in successful")
+			w.sendMessage("✅ Checked in successfully")
+		}
+	} else if !isWithinWorkingHours && checkedIn {
+		// Need to check out
+		log.Println("ACTION REQUIRED: User should be checked out but is still checked in. Performing check-out...")
+		if err := w.check(); err != nil {
+			log.Printf("Error performing check-out: %v", err)
+			w.sendError(errors.New("Check-out failed: " + err.Error()))
+		} else {
+			log.Println("Check-out successful")
+			w.sendMessage("✅ Checked out successfully")
+		}
+	} else {
+		// State is correct
+		if isWithinWorkingHours && checkedIn {
+			log.Println("State is correct: Within working hours and checked in ✓")
+		} else if !isWithinWorkingHours && !checkedIn {
+			log.Println("State is correct: Outside working hours and checked out ✓")
+		}
+	}
+
+	log.Println("=== Reconciliation check complete ===")
 }
 
 func newBot() (*woffu, error) {
@@ -182,6 +231,9 @@ func loadConfig() (*woffu, error) {
 	}
 	parseTime := func(s string) (int, int, error) {
 		splitted := strings.Split(s, ":")
+		if len(splitted) != 2 {
+			return 0, 0, errors.New("invalid time format, expected HH:MM")
+		}
 		hour, err := strconv.Atoi(splitted[0])
 		if err != nil {
 			return 0, 0, err
@@ -190,8 +242,8 @@ func loadConfig() (*woffu, error) {
 		if err != nil {
 			return 0, 0, err
 		}
-		if hour < 0 || hour > 59 || minute < 0 || minute > 59 {
-			return 0, 0, errors.New("Wrong value")
+		if hour < 0 || hour > 23 || minute < 0 || minute > 59 {
+			return 0, 0, errors.New("wrong value")
 		}
 		return hour, minute, nil
 	}
@@ -231,39 +283,4 @@ func loadConfig() (*woffu, error) {
 		SkipList:             []string{},
 		Client:               &http.Client{Timeout: 30 * time.Second},
 	}, nil
-}
-
-// sleepTillNext returns true if it has sleep until check in time, false for check out
-func (w *woffu) sleepTillNext() (bool, time.Duration) {
-	currentTime := time.Now()
-	log.Printf("current time: %d:%d", currentTime.Hour(), currentTime.Minute())
-	sleepHours := 0
-	sleepMinutes := 0
-	isCheckIn := true
-	if currentTime.Minute() <= w.CheckInMinute {
-		sleepMinutes = w.CheckInMinute - currentTime.Minute()
-	} else {
-		sleepMinutes = (currentTime.Minute() - w.CheckInMinute) * -1
-	}
-	if currentTime.Hour() < w.CheckInHour || (currentTime.Hour() == w.CheckInHour && currentTime.Minute() <= w.CheckInMinute) {
-		log.Println("not started day case")
-		sleepHours = w.CheckInHour - currentTime.Hour()
-	} else if currentTime.Hour() > w.CheckOutHour || (currentTime.Hour() == w.CheckOutHour && currentTime.Minute() > w.CheckOutMinute) {
-		log.Println("finished day case")
-		sleepHours = 24 - currentTime.Hour() + w.CheckInHour
-	} else {
-		log.Println("in the office case")
-		isCheckIn = false
-		sleepHours = w.CheckOutHour - currentTime.Hour()
-		if currentTime.Minute() <= w.CheckOutMinute {
-			sleepMinutes = w.CheckOutMinute - currentTime.Minute()
-		} else {
-			sleepMinutes = (currentTime.Minute() - w.CheckOutMinute) * -1
-		}
-	}
-	inprecission := time.Duration(rand.Intn(w.SeconsOfInprecission)-w.SeconsOfInprecission/2) * time.Second
-	sleepTime := time.Duration(sleepHours)*time.Hour + time.Minute*time.Duration(sleepMinutes) + inprecission
-	log.Println("Sleeping for: ", sleepTime)
-	time.Sleep(sleepTime)
-	return isCheckIn, inprecission
 }

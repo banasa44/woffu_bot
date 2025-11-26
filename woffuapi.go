@@ -30,6 +30,11 @@ func (w *woffu) getToken() (string, error) {
 		return "", err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		bodyText, _ := io.ReadAll(resp.Body)
+		log.Printf("getToken failed with status %d: %s", resp.StatusCode, string(bodyText))
+		return "", errors.New("authentication failed with status " + strconv.Itoa(resp.StatusCode))
+	}
 	bodyText, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", err
@@ -59,6 +64,11 @@ func (w *woffu) getUserID(token string) (string, error) {
 		return "", err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		bodyText, _ := io.ReadAll(resp.Body)
+		log.Printf("getUserID failed with status %d: %s", resp.StatusCode, string(bodyText))
+		return "", errors.New("failed to get user ID with status " + strconv.Itoa(resp.StatusCode))
+	}
 	bodyText, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", err
@@ -107,6 +117,11 @@ func (w *woffu) getEvents() ([]eventJSON, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		bodyText, _ := io.ReadAll(resp.Body)
+		log.Printf("getEvents failed with status %d: %s", resp.StatusCode, string(bodyText))
+		return nil, errors.New("failed to get events with status " + strconv.Itoa(resp.StatusCode))
+	}
 	bodyText, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
@@ -145,7 +160,7 @@ func (w *woffu) check() error {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		log.Println(resp.StatusCode)
 		log.Println(string(bodyText))
-		return errors.New("Bad response")
+		return errors.New("bad response")
 	}
 	return nil
 }
@@ -169,4 +184,58 @@ func addAuthHeaders(req *http.Request, corp, token string) {
 
 func getDate() string {
 	return time.Now().Format(time.RFC3339)
+}
+
+func getTodayDateString() string {
+	return time.Now().Format("2006-01-02")
+}
+
+type signJSON struct {
+	SignId    int    `json:"SignId"`
+	StartDate string `json:"StartDate"`
+	EndDate   string `json:"EndDate"`
+}
+
+// isCheckedIn returns true if the user is currently checked in
+func (w *woffu) isCheckedIn() (bool, error) {
+	today := getTodayDateString()
+	req, err := http.NewRequest("GET", "https://"+w.Corp+".woffu.com/api/users/"+w.WoffuUID+"/signs?startDate="+today+"&endDate="+today, nil)
+	if err != nil {
+		return false, err
+	}
+	addCommonHeaders(req)
+	addAuthHeaders(req, w.Corp, w.WoffuToken)
+	resp, err := w.Client.Do(req)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		bodyText, _ := io.ReadAll(resp.Body)
+		log.Printf("isCheckedIn failed with status %d: %s", resp.StatusCode, string(bodyText))
+		return false, errors.New("failed to check sign status with status " + strconv.Itoa(resp.StatusCode))
+	}
+	bodyText, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return false, err
+	}
+	signs := []signJSON{}
+	if err := json.Unmarshal(bodyText, &signs); err != nil {
+		log.Println("Error parsing JSON in isCheckedIn. Body:", string(bodyText))
+		return false, err
+	}
+
+	// If no signs today, user is not checked in
+	if len(signs) == 0 {
+		return false, nil
+	}
+
+	// Check the last sign
+	lastSign := signs[len(signs)-1]
+	// User is checked in if StartDate exists and EndDate is empty/null
+	if lastSign.StartDate != "" && lastSign.EndDate == "" {
+		return true, nil
+	}
+
+	return false, nil
 }
