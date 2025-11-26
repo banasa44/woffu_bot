@@ -3,8 +3,8 @@ package main
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -36,7 +36,7 @@ func (w *woffu) getToken() (string, error) {
 	}
 	t := &tokenJSON{}
 	if err := json.Unmarshal(bodyText, t); err != nil {
-		fmt.Println("Error parsing JSON in getToken. Body:", string(bodyText))
+		log.Println("Error parsing JSON in getToken. Body:", string(bodyText))
 		return "", err
 	}
 	return t.Token, nil
@@ -65,7 +65,7 @@ func (w *woffu) getUserID(token string) (string, error) {
 	}
 	uid := &userIDJSON{}
 	if err := json.Unmarshal(bodyText, uid); err != nil {
-		fmt.Println("Error parsing JSON in getUserID. Body:", string(bodyText))
+		log.Println("Error parsing JSON in getUserID. Body:", string(bodyText))
 		return "", err
 	}
 	return strconv.Itoa(int(uid.UserID)), nil
@@ -113,7 +113,7 @@ func (w *woffu) getEvents() ([]eventJSON, error) {
 	}
 	events := []eventJSON{}
 	if err := json.Unmarshal(bodyText, &events); err != nil {
-		fmt.Println("Error parsing JSON in getEvents. Body:", string(bodyText))
+		log.Println("Error parsing JSON in getEvents. Body:", string(bodyText))
 		return nil, err
 	}
 	return events, nil
@@ -143,8 +143,8 @@ func (w *woffu) check() error {
 		return err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		fmt.Println(resp.StatusCode)
-		fmt.Println(string(bodyText))
+		log.Println(resp.StatusCode)
+		log.Println(string(bodyText))
 		return errors.New("Bad response")
 	}
 	return nil

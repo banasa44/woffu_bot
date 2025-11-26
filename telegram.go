@@ -2,7 +2,7 @@ package main
 
 import (
 	"errors"
-	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -35,7 +35,7 @@ func (w *woffu) runTelegramBot() error {
 			w.sendError(err)
 		}
 		for update := range updates {
-			fmt.Println("Message received: ", update)
+			log.Println("Message received: ", update)
 			if update.CallbackQuery != nil && update.CallbackQuery.Message.Chat.ID == w.ChatID {
 				// Handle keyboard response
 				splitted := strings.Split(update.CallbackQuery.Data, ".")
@@ -150,9 +150,9 @@ func (w *woffu) runTelegramBot() error {
 					today := getCurrentDate()
 					tmpList := []string{}
 					for _, date := range w.SkipList {
-						fmt.Println(date)
+						log.Println(date)
 						if date >= today {
-							fmt.Println("yas")
+							log.Println("yas")
 							tmpList = append(tmpList, date)
 						}
 					}
@@ -187,13 +187,13 @@ func (w *woffu) runTelegramBot() error {
 
 func (w *woffu) sendMessage(msg string) error {
 	if w.Bot == nil {
-		fmt.Println(msg)
+		log.Println(msg)
 		return nil
 	}
-	fmt.Println("Sending message:", msg)
+	log.Println("Sending message:", msg)
 	_, err := w.Bot.Send(telegram.NewMessage(w.ChatID, msg))
 	if err != nil {
-		fmt.Println(err)
+		log.Println(err)
 	}
 	return err
 }

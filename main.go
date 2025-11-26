@@ -2,12 +2,14 @@ package main
 
 import (
 	"errors"
-	"fmt"
+	"log"
 	"math/rand"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	telegram "github.com/go-telegram-bot-api/telegram-bot-api"
@@ -33,18 +35,41 @@ type woffu struct {
 }
 
 func main() {
+	// Setup logging
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
+	log.Println("Starting Woffu Bot...")
+
+	// Handle signals
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		sig := <-c
+		log.Printf("Received termination signal: %v. Shutting down...", sig)
+		os.Exit(0)
+	}()
+
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("CRITICAL ERROR (PANIC): %v", r)
+			os.Exit(1)
+		}
+	}()
+
 	rand.Seed(time.Now().UnixNano())
 
 	// Load config
 	w, err := newBot()
 	if err != nil {
+		log.Printf("Error creating bot: %v", err)
 		panic(err)
 	}
 
 	// Get credentials
 	err = w.login()
 	if err != nil {
-		w.sendError(errors.New("Error login: " + err.Error() + ". This will cause panic!"))
+		errMsg := "Error login: " + err.Error() + ". This will cause panic!"
+		log.Println(errMsg)
+		w.sendError(errors.New(errMsg))
 		panic(err)
 	}
 
@@ -56,15 +81,19 @@ func main() {
 		// Get events
 		evs, err := w.getEvents()
 		if err != nil {
+			log.Printf("Error getting events: %v", err)
 			// Maybe token has expired, renew credentials and retry
 			if errCount == 1 {
-				w.sendError(errors.New(err.Error() + ". This will cause panic!"))
+				errMsg := err.Error() + ". This will cause panic!"
+				log.Println(errMsg)
+				w.sendError(errors.New(errMsg))
 				panic("Too many consecutive errors")
 			} else {
 				w.sendError(err)
 			}
 			err = w.login()
 			if err != nil {
+				log.Printf("Error re-login: %v", err)
 				w.sendError(err)
 			}
 			errCount++
@@ -92,6 +121,7 @@ func main() {
 		if isWorkingDay && !isSkipDay {
 			// It's a working day
 			if err := w.check(); err != nil {
+				log.Printf("Error checking in/out: %v", err)
 				w.sendError(err)
 			} else {
 				errCount = 0
@@ -111,7 +141,7 @@ func main() {
 				}
 			}
 			errCount = 0
-			fmt.Println("Free day, not checking in/out")
+			log.Println("Free day, not checking in/out")
 		}
 		if inprecission < 0 {
 			time.Sleep(inprecission * -1)
@@ -206,7 +236,7 @@ func loadConfig() (*woffu, error) {
 // sleepTillNext returns true if it has sleep until check in time, false for check out
 func (w *woffu) sleepTillNext() (bool, time.Duration) {
 	currentTime := time.Now()
-	fmt.Println("current time: ", currentTime.Hour(), ":", currentTime.Minute())
+	log.Printf("current time: %d:%d", currentTime.Hour(), currentTime.Minute())
 	sleepHours := 0
 	sleepMinutes := 0
 	isCheckIn := true
@@ -216,13 +246,13 @@ func (w *woffu) sleepTillNext() (bool, time.Duration) {
 		sleepMinutes = (currentTime.Minute() - w.CheckInMinute) * -1
 	}
 	if currentTime.Hour() < w.CheckInHour || (currentTime.Hour() == w.CheckInHour && currentTime.Minute() <= w.CheckInMinute) {
-		fmt.Println("not started day case")
+		log.Println("not started day case")
 		sleepHours = w.CheckInHour - currentTime.Hour()
 	} else if currentTime.Hour() > w.CheckOutHour || (currentTime.Hour() == w.CheckOutHour && currentTime.Minute() > w.CheckOutMinute) {
-		fmt.Println("finished day case")
+		log.Println("finished day case")
 		sleepHours = 24 - currentTime.Hour() + w.CheckInHour
 	} else {
-		fmt.Println("in the office case")
+		log.Println("in the office case")
 		isCheckIn = false
 		sleepHours = w.CheckOutHour - currentTime.Hour()
 		if currentTime.Minute() <= w.CheckOutMinute {
@@ -233,7 +263,7 @@ func (w *woffu) sleepTillNext() (bool, time.Duration) {
 	}
 	inprecission := time.Duration(rand.Intn(w.SeconsOfInprecission)-w.SeconsOfInprecission/2) * time.Second
 	sleepTime := time.Duration(sleepHours)*time.Hour + time.Minute*time.Duration(sleepMinutes) + inprecission
-	fmt.Println("Sleeping for: ", sleepTime)
+	log.Println("Sleeping for: ", sleepTime)
 	time.Sleep(sleepTime)
 	return isCheckIn, inprecission
 }
