@@ -3,7 +3,6 @@ package main
 import (
 	"errors"
 	"log"
-	"math/rand"
 	"net/http"
 	"os"
 	"os/signal"
@@ -15,23 +14,26 @@ import (
 	telegram "github.com/go-telegram-bot-api/telegram-bot-api"
 )
 
+const (
+	ReconcileIntervalMinutes = 7
+)
+
 type woffu struct {
-	User                 string
-	Pass                 string
-	Corp                 string
-	BotToken             string
-	ChatID               int64
-	CheckInHour          int
-	CheckInMinute        int
-	CheckOutHour         int
-	CheckOutMinute       int
-	SeconsOfInprecission int
-	WorkingEventIDs      []int
-	Bot                  *telegram.BotAPI
-	WoffuToken           string
-	WoffuUID             string
-	SkipList             []string
-	Client               *http.Client
+	User            string
+	Pass            string
+	Corp            string
+	BotToken        string
+	ChatID          int64
+	CheckInHour     int
+	CheckInMinute   int
+	CheckOutHour    int
+	CheckOutMinute  int
+	WorkingEventIDs []int
+	Bot             *telegram.BotAPI
+	WoffuToken      string
+	WoffuUID        string
+	SkipList        []string
+	Client          *http.Client
 }
 
 func main() {
@@ -54,8 +56,6 @@ func main() {
 			os.Exit(1)
 		}
 	}()
-
-	rand.Seed(time.Now().UnixNano())
 
 	// Load config
 	w, err := newBot()
@@ -80,8 +80,8 @@ func main() {
 	// Perform immediate reconciliation check on startup
 	w.reconcile()
 
-	// Create a ticker for 30-minute intervals
-	ticker := time.NewTicker(30 * time.Minute)
+	// Create a ticker for reconciliation intervals
+	ticker := time.NewTicker(ReconcileIntervalMinutes * time.Minute)
 	defer ticker.Stop()
 
 	// Endless loop with ticker-based polling
@@ -299,23 +299,18 @@ func loadConfig() (*woffu, error) {
 		}
 		workingIDs = append(workingIDs, id)
 	}
-	secs, err := strconv.Atoi(os.Getenv("IMPRECISSION"))
-	if err != nil {
-		secs = 0
-	}
 	return &woffu{
-		User:                 user,
-		Pass:                 pass,
-		Corp:                 corp,
-		BotToken:             botToken,
-		ChatID:               int64(chatID),
-		CheckInHour:          checkInHour,
-		CheckInMinute:        checkInMinute,
-		CheckOutHour:         checkOutHour,
-		CheckOutMinute:       checkOutMinute,
-		SeconsOfInprecission: secs,
-		WorkingEventIDs:      workingIDs,
-		SkipList:             []string{},
-		Client:               &http.Client{Timeout: 30 * time.Second},
+		User:            user,
+		Pass:            pass,
+		Corp:            corp,
+		BotToken:        botToken,
+		ChatID:          int64(chatID),
+		CheckInHour:     checkInHour,
+		CheckInMinute:   checkInMinute,
+		CheckOutHour:    checkOutHour,
+		CheckOutMinute:  checkOutMinute,
+		WorkingEventIDs: workingIDs,
+		SkipList:        []string{},
+		Client:          &http.Client{Timeout: 30 * time.Second},
 	}, nil
 }

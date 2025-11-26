@@ -107,7 +107,6 @@ type eventJSON struct {
 func (w *woffu) getEvents() ([]eventJSON, error) {
 	dateTime := getTodayDateString()
 	requestURL := "https://" + w.Corp + ".woffu.com/api/users/" + w.WoffuUID + "/events?fromDate=" + dateTime
-	log.Printf("DEBUG getEvents: Requesting URL: %s", requestURL)
 	req, err := http.NewRequest("GET", requestURL, nil)
 	if err != nil {
 		return nil, err
@@ -133,7 +132,6 @@ func (w *woffu) getEvents() ([]eventJSON, error) {
 		log.Println("Error parsing JSON in getEvents. Body:", string(bodyText))
 		return nil, err
 	}
-	log.Printf("DEBUG getEvents: Raw API response body: %s", string(bodyText))
 	log.Printf("DEBUG getEvents: Parsed %d events from API", len(events))
 	return events, nil
 }
@@ -208,7 +206,6 @@ func (w *woffu) isCheckedIn() (bool, error) {
 	today := getTodayDateString()
 	// Use the slots endpoint to get daily activity
 	requestURL := "https://" + w.Corp + ".woffu.com/api/svc/signs/v2/signs/slots?fromDate=" + today + "&toDate=" + today
-	log.Printf("DEBUG isCheckedIn: Requesting URL: %s", requestURL)
 	req, err := http.NewRequest("GET", requestURL, nil)
 	if err != nil {
 		return false, err
@@ -233,9 +230,6 @@ func (w *woffu) isCheckedIn() (bool, error) {
 	if err != nil {
 		return false, err
 	}
-
-	// Log raw response before parsing for debugging
-	log.Printf("DEBUG isCheckedIn: Raw API response body: %s", string(bodyText))
 
 	// Parse as slots format
 	slots := []signSlot{}

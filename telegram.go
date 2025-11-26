@@ -35,7 +35,11 @@ func (w *woffu) runTelegramBot() error {
 			w.sendError(err)
 		}
 		for update := range updates {
-			log.Println("Message received: ", update)
+			if update.Message != nil {
+				log.Printf("Telegram message received: %s", update.Message.Text)
+			} else if update.CallbackQuery != nil {
+				log.Printf("Telegram callback received: %s", update.CallbackQuery.Data)
+			}
 			if update.CallbackQuery != nil && update.CallbackQuery.Message.Chat.ID == w.ChatID {
 				// Handle keyboard response
 				splitted := strings.Split(update.CallbackQuery.Data, ".")
@@ -150,9 +154,7 @@ func (w *woffu) runTelegramBot() error {
 					today := getCurrentDate()
 					tmpList := []string{}
 					for _, date := range w.SkipList {
-						log.Println(date)
 						if date >= today {
-							log.Println("yas")
 							tmpList = append(tmpList, date)
 						}
 					}
